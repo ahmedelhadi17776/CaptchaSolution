@@ -139,9 +139,9 @@ namespace Captcha.UI
 
                             currentRecaptchaCheckbox = checkbox;
 
-                            checkbox.CheckedChanged += (s, e) =>
+                            checkbox.CheckedChanged += async (s, e) =>
                             {
-                                if (txtAnswer != null)
+                                if (txtAnswer != null && checkbox != null)
                                 {
                                     txtAnswer.Text = checkbox.Checked.ToString().ToLower();
                                     if (checkbox.Checked)
@@ -161,7 +161,11 @@ namespace Captcha.UI
                                                 }
                                                 else
                                                 {
-                                                    BeginInvoke(() => LoadCaptcha());
+                                                    await Task.Delay(1500);
+                                                    if (!IsDisposed && checkbox.Checked)
+                                                    {
+                                                        BeginInvoke(() => LoadCaptcha());
+                                                    }
                                                 }
                                             }
                                         }
