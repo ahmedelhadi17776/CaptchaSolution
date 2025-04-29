@@ -8,7 +8,16 @@ namespace Captcha.UI
     public partial class Form1 : Form
     {
         private readonly IServiceProvider _serviceProvider;
-        private ICaptcha _currentCaptcha;
+        private ICaptcha? _currentCaptcha;
+
+        private ComboBox cmbType = null!;
+        private Panel pnlDisplay = null!;
+        private TextBox txtAnswer = null!;
+        private Label lblAnswer = null!;
+        private Button btnValidate = null!;
+        private Button btnRefresh = null!;
+        private Label lblResult = null!;
+        private CheckBox? currentRecaptchaCheckbox;
 
         public Form1(IServiceProvider serviceProvider)
         {
@@ -16,20 +25,35 @@ namespace Captcha.UI
             InitializeComponent();
             InitializeControls();
 
-            cmbType.SelectedIndexChanged += CmbType_SelectedIndexChanged;
-            btnValidate.Click += BtnValidate_Click;
-            btnRefresh.Click += BtnRefresh_Click;
+            if (cmbType != null)
+            {
+                cmbType.SelectedIndexChanged += CmbType_SelectedIndexChanged;
+            }
 
-            txtAnswer.KeyPress += TxtAnswer_KeyPress;
+            if (btnValidate != null)
+            {
+                btnValidate.Click += BtnValidate_Click;
+            }
+
+            if (btnRefresh != null)
+            {
+                btnRefresh.Click += BtnRefresh_Click;
+            }
+
+            if (txtAnswer != null)
+            {
+                txtAnswer.KeyPress += TxtAnswer_KeyPress;
+            }
 
             LoadCaptcha();
         }
-        private void TxtAnswer_KeyPress(object sender, KeyPressEventArgs e)
+
+        private void TxtAnswer_KeyPress(object? sender, KeyPressEventArgs e)
         {
             if (e.KeyChar == (char)Keys.Enter)
             {
                 e.Handled = true;
-                BtnValidate_Click(sender, e);
+                BtnValidate_Click(sender ?? this, e);
             }
         }
 
@@ -37,10 +61,18 @@ namespace Captcha.UI
         {
             try
             {
+                if (_serviceProvider == null)
+                {
+                    MessageBox.Show("Service provider not initialized", "Error");
+                    return;
+                }
+
+                if (cmbType?.SelectedIndex < 0 || pnlDisplay == null) return;
+
                 var type = (CaptchaType)cmbType.SelectedIndex;
                 var generators = _serviceProvider.GetServices<ICaptchaGenerator>();
-                var generator = generators.FirstOrDefault(g => g.Type == type);
 
+                var generator = generators.FirstOrDefault(g => g.Type == type);
                 if (generator == null)
                 {
                     MessageBox.Show($"No generator found for CAPTCHA type: {type}", "Error");
@@ -48,8 +80,11 @@ namespace Captcha.UI
                 }
 
                 _currentCaptcha = generator.Generate();
+                if (_currentCaptcha == null) return;
 
                 pnlDisplay.Controls.Clear();
+                currentRecaptchaCheckbox = null;
+
                 switch (type)
                 {
                     case CaptchaType.Text:
@@ -65,37 +100,94 @@ namespace Captcha.UI
 
                     case CaptchaType.Image:
                     case CaptchaType.reCAPTCHA:
-                        var pb = new PictureBox
+                        if (_currentCaptcha.ImageData == null) return;
+
+                        var pictureBox = new PictureBox
                         {
-                            Dock = DockStyle.Fill,
-                            SizeMode = PictureBoxSizeMode.CenterImage
+                            Size = new Size(200, type == CaptchaType.reCAPTCHA ? 80 : 150),
+                            SizeMode = PictureBoxSizeMode.Zoom,
+                            Location = new Point(0, 0),
+                            Dock = DockStyle.Top
                         };
+
                         using (var ms = new MemoryStream(_currentCaptcha.ImageData))
-                            pb.Image = Image.FromStream(ms);
+                        {
+                            pictureBox.Image = Image.FromStream(ms);
+                        }
 
                         if (type == CaptchaType.reCAPTCHA)
                         {
+                            var recaptchaLabel = new Label
+                            {
+                                Location = new Point(20, 10),
+                                Size = new Size(160, 30),
+                                Text = "reCAPTCHA",
+                                Font = new Font("Arial", 12, FontStyle.Bold),
+                                TextAlign = ContentAlignment.MiddleLeft,
+                                BackColor = Color.Transparent
+                            };
+
                             var checkbox = new CheckBox
                             {
-                                Location = new Point(20, 60),
-                                Size = new Size(20, 20),
-                                Text = ""
+                                Location = new Point(20, 90),
+                                Size = new Size(150, 24),
+                                Text = "I'm not a robot",
+                                TextAlign = ContentAlignment.MiddleLeft,
+                                FlatStyle = FlatStyle.Standard,
+                                AutoSize = true
                             };
+
+                            currentRecaptchaCheckbox = checkbox;
+
                             checkbox.CheckedChanged += (s, e) =>
                             {
-                                txtAnswer.Text = checkbox.Checked.ToString().ToLower();
-                                if (checkbox.Checked)
-                                    BtnValidate_Click(s, e);
+                                if (txtAnswer != null)
+                                {
+                                    txtAnswer.Text = checkbox.Checked.ToString().ToLower();
+                                    if (checkbox.Checked)
+                                    {
+                                        var validator = _serviceProvider.GetRequiredService<ICaptchaValidator>();
+                                        if (_currentCaptcha != null)
+                                        {
+                                            bool isValid = validator.Validate(_currentCaptcha, txtAnswer.Text);
+                                            if (lblResult != null)
+                                            {
+                                                lblResult.Text = isValid ? "✓ Verified!" : "✗ Verification failed";
+                                                lblResult.ForeColor = isValid ? Color.Green : Color.Red;
+
+                                                if (!isValid)
+                                                {
+                                                    checkbox.Checked = false;
+                                                }
+                                                else
+                                                {
+                                                    BeginInvoke(() => LoadCaptcha());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             };
+
+                            pnlDisplay.Controls.Add(pictureBox);
+                            pnlDisplay.Controls.Add(recaptchaLabel);
                             pnlDisplay.Controls.Add(checkbox);
                         }
-
-                        pnlDisplay.Controls.Add(pb);
+                        else
+                        {
+                            pnlDisplay.Controls.Add(pictureBox);
+                        }
                         break;
                 }
 
-                txtAnswer.Clear();
-                lblResult.Text = string.Empty;
+                if (txtAnswer != null)
+                {
+                    txtAnswer.Clear();
+                }
+                if (lblResult != null)
+                {
+                    lblResult.Text = string.Empty;
+                }
             }
             catch (Exception ex)
             {
@@ -103,15 +195,14 @@ namespace Captcha.UI
             }
         }
 
-
-
-        private void BtnValidate_Click(object sender, EventArgs e)
+        private void BtnValidate_Click(object? sender, EventArgs e)
         {
-            var type = (CaptchaType)cmbType.SelectedIndex;
-            if (type == CaptchaType.reCAPTCHA)
+            if (_currentCaptcha == null || txtAnswer == null || lblResult == null) return;
+
+            var type = cmbType?.SelectedIndex >= 0 ? (CaptchaType)cmbType.SelectedIndex : CaptchaType.Text;
+            if (type == CaptchaType.reCAPTCHA && currentRecaptchaCheckbox != null)
             {
-                lblResult.Text = "reCAPTCHA validation not implemented";
-                lblResult.ForeColor = Color.Red;
+                currentRecaptchaCheckbox.Checked = !string.IsNullOrEmpty(txtAnswer.Text) && txtAnswer.Text.ToLower() == "true";
                 return;
             }
 
@@ -140,14 +231,16 @@ namespace Captcha.UI
             }
         }
 
-
-        private void BtnRefresh_Click(object sender, EventArgs e)
+        private void BtnRefresh_Click(object? sender, EventArgs e)
         {
             LoadCaptcha();
         }
 
-        private void CmbType_SelectedIndexChanged(object sender, EventArgs e)
+        private void CmbType_SelectedIndexChanged(object? sender, EventArgs e)
         {
+            if (txtAnswer == null || lblAnswer == null || cmbType?.SelectedIndex < 0) return;
+            if (cmbType?.Items == null || cmbType.Items.Count == 0) return;
+
             var type = (CaptchaType)cmbType.SelectedIndex;
             txtAnswer.Visible = type != CaptchaType.reCAPTCHA;
             lblAnswer.Visible = type != CaptchaType.reCAPTCHA;
@@ -156,8 +249,6 @@ namespace Captcha.UI
 
         private void InitializeControls()
         {
-            // Create and configure UI controls
-
             var lblType = new Label
             {
                 Location = new Point(12, 12),
@@ -202,8 +293,7 @@ namespace Captcha.UI
                 Text = "Refresh"
             };
 
-
-            this.lblAnswer = new Label
+            lblAnswer = new Label
             {
                 Location = new Point(12, 230),
                 Size = new Size(200, 20),
@@ -218,7 +308,6 @@ namespace Captcha.UI
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
-
             this.MinimumSize = new Size(240, 385);
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -226,25 +315,14 @@ namespace Captcha.UI
             var toolTip = new ToolTip();
             toolTip.SetToolTip(btnRefresh, "Generate new CAPTCHA");
 
-
             Controls.AddRange(new Control[]
             {
-                lblType, cmbType, 
-                pnlDisplay, 
+                lblType, cmbType,
+                pnlDisplay,
                 lblAnswer, txtAnswer,
-                btnValidate, btnRefresh, 
+                btnValidate, btnRefresh,
                 lblResult
             });
-
-
         }
-
-        private ComboBox cmbType;
-        private Panel pnlDisplay;
-        private TextBox txtAnswer;
-        private Label lblAnswer;
-        private Button btnValidate;
-        private Button btnRefresh;
-        private Label lblResult;
     }
 }
